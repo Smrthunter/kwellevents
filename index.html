@@ -1051,17 +1051,18 @@
     </div>
 
     <!-- ========== JAVASCRIPT ========== -->
-    <script>
+   <script>
         // ==================== CORE DATA ====================
         let stockDB = {
-            version: '2.0',
+            version: '2.1',
             currency: 'KSH',
             products: [],
             transactions: [],
             settings: {
                 shopName: 'KWELL EVENTS',
                 autoBackup: true,
-                lastBackup: null
+                lastBackup: null,
+                lastLoad: null
             }
         };
 
@@ -1070,84 +1071,295 @@
         let currentlyEditingItem = null;
 
         // ==================== INITIALIZATION ====================
-        document.addEventListener('DOMContentLoaded', function () {
+        window.onload = function() {
+            console.log('=== KWELL STOCK MANAGER STARTING ===');
+            console.log('Window loaded, initializing...');
+            
+            // Load data immediately
             loadData();
+            
+            // Setup other components
             setupAutoSave();
             setupImport();
-            updateFooter();
-
-            // Show welcome notification
+            
+            // Update UI
             setTimeout(() => {
-                showNotification('✅ Stock system loaded successfully!', 'success');
-            }, 1000);
-        });
+                updateAllDisplays();
+                updateFooter();
+                showNotification('✅ Stock system loaded!', 'success');
+                
+                // Debug info
+                console.log('Initialization complete');
+                console.log('Items loaded:', stockDB.products.length);
+                console.log('Total stock:', stockDB.products.reduce((sum, item) => sum + (item.currentStock || 0), 0));
+            }, 100);
+        };
 
-        // ==================== DATA MANAGEMENT ====================
+        // ==================== ENHANCED DATA LOADING ====================
         function loadData() {
             try {
-                const saved = localStorage.getItem('kwellStockData');
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    if (parsed.version === '2.0') {
-                        stockDB = parsed;
-                        console.log('Data loaded:', stockDB.products.length, 'items');
-                    } else {
-                        migrateOldData(parsed);
-                    }
-                } else {
+                console.log('Loading data from localStorage...');
+                
+                // Check localStorage availability
+                if (typeof localStorage === 'undefined') {
+                    console.error('localStorage not available');
+                    showNotification('❌ Browser storage not available', 'error');
                     initializeSampleData();
+                    return false;
                 }
-            } catch (e) {
-                console.error('Load error:', e);
-                initializeSampleData();
+                
+                // Try to load saved data
+                const saved = localStorage.getItem('kwellStockData');
+                
+                if (!saved) {
+                    console.log('No saved data found');
+                    // Check if we have your backup data in the code
+                    loadBackupData();
+                    return true;
+                }
+                
+                console.log('Found saved data, parsing...');
+                const parsed = JSON.parse(saved);
+                
+                // Validate and load data
+                if (parsed && parsed.products && Array.isArray(parsed.products)) {
+                    console.log('Valid data structure found');
+                    
+                    // Version handling
+                    if (!parsed.version) {
+                        console.log('Migrating old data format...');
+                        migrateOldData(parsed);
+                    } else {
+                        // Use the loaded data
+                        stockDB = parsed;
+                        console.log(`Loaded v${parsed.version} data`);
+                    }
+                    
+                    // Ensure version is up to date
+                    stockDB.version = '2.1';
+                    
+                    // Ensure all arrays exist
+                    stockDB.products = stockDB.products || [];
+                    stockDB.transactions = stockDB.transactions || [];
+                    
+                    // Ensure settings exist
+                    stockDB.settings = stockDB.settings || {
+                        shopName: 'KWELL EVENTS',
+                        autoBackup: true,
+                        lastBackup: null
+                    };
+                    
+                    // Update last load time
+                    stockDB.settings.lastLoad = new Date().toISOString();
+                    
+                    // Log summary
+                    const totalStock = stockDB.products.reduce((sum, item) => sum + (item.currentStock || 0), 0);
+                    console.log(`✅ Data loaded: ${stockDB.products.length} items, ${totalStock} total stock`);
+                    
+                    // Validate data
+                    validateDataIntegrity();
+                    
+                } else {
+                    console.error('Invalid data structure in localStorage');
+                    showNotification('⚠️ Invalid saved data, loading backup', 'warning');
+                    loadBackupData();
+                }
+                
+                return true;
+                
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showNotification('❌ Error loading saved data', 'error');
+                loadBackupData();
+                return false;
             }
-            updateAllDisplays();
         }
 
+        // Function to load your backup data directly
+        function loadBackupData() {
+            console.log('Loading backup data...');
+            
+            // For now, initialize with sample data
+            if (stockDB.products.length === 0) {
+                initializeSampleData();
+            }
+        }
+
+        function validateDataIntegrity() {
+            console.log('Validating data integrity...');
+            
+            let validItems = 0;
+            let invalidItems = 0;
+            
+            stockDB.products = stockDB.products.filter(item => {
+                if (!item || typeof item !== 'object') {
+                    invalidItems++;
+                    return false;
+                }
+                
+                // Ensure required fields
+                item.id = item.id || 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+                item.name = item.name || 'Unnamed Item';
+                item.category = item.category || 'other';
+                item.currentStock = typeof item.currentStock === 'number' ? item.currentStock : 0;
+                item.minStock = typeof item.minStock === 'number' ? item.minStock : 5;
+                item.reorderQty = typeof item.reorderQty === 'number' ? item.reorderQty : 10;
+                item.unit = item.unit || 'piece';
+                item.price = typeof item.price === 'number' ? item.price : 0;
+                item.color = item.color || '#6c757d';
+                item.supplier = item.supplier || 'Not specified';
+                
+                validItems++;
+                return true;
+            });
+            
+            console.log(`Data validated: ${validItems} valid items, ${invalidItems} removed`);
+            
+            if (invalidItems > 0) {
+                showNotification(`⚠️ Removed ${invalidItems} invalid items`, 'warning');
+            }
+        }
+
+        // ==================== ENHANCED DATA SAVING ====================
         function saveData() {
             try {
+                console.log('Saving data to localStorage...');
+                
+                if (typeof localStorage === 'undefined') {
+                    console.error('localStorage not available');
+                    showNotification('❌ Cannot save - browser storage disabled', 'error');
+                    return;
+                }
+                
+                // Update timestamp
                 stockDB.settings.lastSave = new Date().toISOString();
-                localStorage.setItem('kwellStockData', JSON.stringify(stockDB));
+                stockDB.version = '2.1';
+                
+                // Create clean copy
+                const dataToSave = JSON.parse(JSON.stringify(stockDB));
+                
+                // Save to localStorage
+                localStorage.setItem('kwellStockData', JSON.stringify(dataToSave));
+                
+                // Verify save
+                const saved = localStorage.getItem('kwellStockData');
+                if (!saved) {
+                    throw new Error('Save verification failed');
+                }
+                
                 updateLastSaved();
-                updateFooter();
-            } catch (e) {
-                console.error('Save error:', e);
+                console.log('✅ Data saved successfully');
+                
+            } catch (error) {
+                console.error('Save error:', error);
+                showNotification('❌ Error saving data', 'error');
             }
         }
 
         function updateLastSaved() {
             const now = new Date();
-            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const timeStr = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
             document.getElementById('lastSaved').textContent = `Saved: ${timeStr}`;
         }
 
-        // ==================== AUTOMATIC FEATURES ====================
+        // ==================== AUTO-SAVE ENHANCEMENTS ====================
         function setupAutoSave() {
-            setInterval(() => {
-                saveData();
-                checkLowStock();
+            // Auto-save every 30 seconds
+            const autoSaveInterval = setInterval(() => {
+                if (stockDB.products.length > 0) {
+                    saveData();
+                }
             }, 30000);
+            
+            // Save on page unload
+            window.addEventListener('beforeunload', function(e) {
+                console.log('Page unloading - saving data...');
+                saveData();
+            });
+            
+            // Save when tab becomes inactive
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) {
+                    console.log('Tab hidden - saving data...');
+                    saveData();
+                }
+            });
+            
+            // Save on any user interaction
+            document.addEventListener('click', function() {
+                setTimeout(saveData, 1000);
+            });
+            
+            console.log('Auto-save system initialized');
         }
 
-        function checkLowStock() {
-            const lowStockItems = stockDB.products.filter(item =>
-                item.currentStock <= item.minStock && item.currentStock > 0
-            );
-
-            const outOfStock = stockDB.products.filter(item =>
-                item.currentStock === 0
-            );
-
-            if (lowStockItems.length > 0 || outOfStock.length > 0) {
-                let message = '';
-                if (lowStockItems.length > 0) {
-                    message += `⚠️ ${lowStockItems.length} item(s) low on stock\n`;
+        // ==================== DATA MIGRATION ====================
+        function migrateOldData(oldData) {
+            console.log('Migrating old data format...');
+            
+            if (oldData.items && Array.isArray(oldData.items)) {
+                // Convert from v1.0 format
+                stockDB.products = oldData.items.map(item => ({
+                    id: item.id || 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+                    name: item.name || 'Unnamed Item',
+                    category: item.category || 'other',
+                    color: item.color || '#6c757d',
+                    currentStock: item.stock || 0,
+                    minStock: item.minStock || 5,
+                    reorderQty: item.reorderQty || 10,
+                    unit: item.unit || 'piece',
+                    price: item.price || 0,
+                    supplier: item.supplier || 'Not specified',
+                    dateAdded: item.dateAdded || new Date().toISOString()
+                }));
+                
+                if (oldData.transactions) {
+                    stockDB.transactions = oldData.transactions;
                 }
-                if (outOfStock.length > 0) {
-                    message += `❌ ${outOfStock.length} item(s) out of stock`;
-                }
+                
+                stockDB.settings.shopName = oldData.shopName || 'KWELL EVENTS';
+                
+                saveData();
+                showNotification('✅ Old data migrated successfully', 'success');
+            }
+        }
 
-                showNotification(message, 'warning');
+        // ==================== DEBUG FUNCTIONS ====================
+        function debugDataState() {
+            console.log('=== DEBUG DATA STATE ===');
+            console.log('LocalStorage available:', typeof localStorage !== 'undefined');
+            console.log('stockDB.products.length:', stockDB.products.length);
+            
+            // Calculate totals
+            const totalStock = stockDB.products.reduce((sum, item) => sum + (item.currentStock || 0), 0);
+            const totalValue = stockDB.products.reduce((sum, item) => sum + ((item.currentStock || 0) * (item.price || 0)), 0);
+            
+            console.log('Total stock:', totalStock);
+            console.log('Total value:', totalValue);
+            
+            // Check localStorage
+            const saved = localStorage.getItem('kwellStockData');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                const savedStock = parsed.products.reduce((sum, item) => sum + (item.currentStock || 0), 0);
+                console.log('LocalStorage stock:', savedStock);
+                console.log('LocalStorage item count:', parsed.products.length);
+            }
+            
+            // Show in notification
+            showNotification(`📊 Debug: ${stockDB.products.length} items, ${totalStock} total stock, KSH ${totalValue.toLocaleString()} value`, 'info');
+        }
+
+        function forceSave() {
+            saveData();
+            showNotification('💾 Data force saved!', 'success');
+        }
+
+        function reloadData() {
+            if (confirm('Reload data from localStorage?')) {
+                loadData();
+                updateAllDisplays();
+                showNotification('🔄 Data reloaded', 'success');
             }
         }
 
@@ -1156,15 +1368,15 @@
             document.querySelectorAll('.tab-content').forEach(tab => {
                 tab.classList.remove('active');
             });
-
+            
             document.querySelectorAll('.tab').forEach(tab => {
                 tab.classList.remove('active');
             });
-
+            
             document.getElementById(tabName).classList.add('active');
             event.target.classList.add('active');
-
-            switch (tabName) {
+            
+            switch(tabName) {
                 case 'dashboard':
                     updateDashboard();
                     break;
@@ -1186,7 +1398,7 @@
                     break;
                 case 'transfer':
                     if (stockDB.settings.lastBackup) {
-                        document.getElementById('lastBackupDate').textContent =
+                        document.getElementById('lastBackupDate').textContent = 
                             new Date(stockDB.settings.lastBackup).toLocaleDateString();
                     } else {
                         document.getElementById('lastBackupDate').textContent = 'Never';
@@ -1197,10 +1409,10 @@
 
         // ==================== DASHBOARD ====================
         function updateDashboard() {
-            const totalItems = stockDB.products.reduce((sum, item) => sum + item.currentStock, 0);
-            const lowStockCount = stockDB.products.filter(item => item.currentStock <= item.minStock).length;
-            const stockValue = stockDB.products.reduce((sum, item) => sum + (item.currentStock * item.price), 0);
-
+            const totalItems = stockDB.products.reduce((sum, item) => sum + (item.currentStock || 0), 0);
+            const lowStockCount = stockDB.products.filter(item => (item.currentStock || 0) <= (item.minStock || 5)).length;
+            const stockValue = stockDB.products.reduce((sum, item) => sum + ((item.currentStock || 0) * (item.price || 0)), 0);
+            
             const today = new Date().toDateString();
             const todaySales = stockDB.transactions
                 .filter(t => new Date(t.date).toDateString() === today && t.type === 'out')
@@ -1215,7 +1427,7 @@
         }
 
         function updateLowStockAlert() {
-            const lowStockItems = stockDB.products.filter(item => item.currentStock <= item.minStock);
+            const lowStockItems = stockDB.products.filter(item => (item.currentStock || 0) <= (item.minStock || 5));
             const alertDiv = document.getElementById('lowStockAlert');
             const listDiv = document.getElementById('lowStockList');
 
@@ -1230,7 +1442,7 @@
                     <div>
                         <strong>${item.name}</strong>
                         <div style="font-size: 0.9em; color: #666;">
-                            ${item.currentStock} ${item.unit} left (Min: ${item.minStock})
+                            ${item.currentStock || 0} ${item.unit} left (Min: ${item.minStock || 5})
                         </div>
                     </div>
                     <button onclick="showTab('add'); selectItem('${item.id}');" 
@@ -1250,9 +1462,9 @@
             let filtered = stockDB.products;
 
             if (searchTerm) {
-                filtered = filtered.filter(item =>
+                filtered = filtered.filter(item => 
                     item.name.toLowerCase().includes(searchTerm) ||
-                    item.category.toLowerCase().includes(searchTerm)
+                    (item.category && item.category.toLowerCase().includes(searchTerm))
                 );
             }
 
@@ -1261,25 +1473,27 @@
             }
 
             if (stockFilter === 'low') {
-                filtered = filtered.filter(item => item.currentStock <= item.minStock && item.currentStock > 0);
+                filtered = filtered.filter(item => (item.currentStock || 0) <= (item.minStock || 5) && (item.currentStock || 0) > 0);
             } else if (stockFilter === 'good') {
-                filtered = filtered.filter(item => item.currentStock > item.minStock);
+                filtered = filtered.filter(item => (item.currentStock || 0) > (item.minStock || 5));
             } else if (stockFilter === 'out') {
-                filtered = filtered.filter(item => item.currentStock === 0);
+                filtered = filtered.filter(item => (item.currentStock || 0) === 0);
             }
 
             const listDiv = document.getElementById('stockList');
             listDiv.innerHTML = filtered.map(item => {
-                const stockPercent = (item.currentStock / item.minStock) * 100;
+                const currentStock = item.currentStock || 0;
+                const minStock = item.minStock || 5;
+                const stockPercent = (currentStock / minStock) * 100;
                 let statusClass = 'good-stock';
                 let statusText = 'Good';
                 let statusColor = 'status-good';
 
-                if (item.currentStock === 0) {
+                if (currentStock === 0) {
                     statusClass = 'low-stock';
                     statusText = 'Out';
                     statusColor = 'status-danger';
-                } else if (item.currentStock <= item.minStock) {
+                } else if (currentStock <= minStock) {
                     statusClass = 'low-stock';
                     statusText = 'Low';
                     statusColor = 'status-danger';
@@ -1302,13 +1516,13 @@
                         </div>
                         
                         <div class="item-stock">
-                            ${item.currentStock} <span class="item-unit">${item.unit}</span>
+                            ${currentStock} <span class="item-unit">${item.unit}</span>
                         </div>
                         
-                        <div class="item-price">${formatKSH(item.price)}</div>
+                        <div class="item-price">${formatKSH(item.price || 0)}</div>
                         
                         <div style="font-size: 0.9em; color: #666; text-align: center; margin-top: 10px;">
-                            Min: ${item.minStock} | Reorder: ${item.reorderQty}
+                            Min: ${minStock} | Reorder: ${item.reorderQty || 10}
                         </div>
                         
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px;">
@@ -1343,25 +1557,25 @@
             const select = document.getElementById('itemSelect');
             select.innerHTML = '<option value="">-- Choose Item --</option>' +
                 stockDB.products.map(item => `
-                    <option value="${item.id}">${item.name} (${item.currentStock} ${item.unit})</option>
+                    <option value="${item.id}">${item.name} (${item.currentStock || 0} ${item.unit})</option>
                 `).join('');
         }
 
         function updateItemDetails() {
             const itemId = document.getElementById('itemSelect').value;
             const detailsDiv = document.getElementById('itemDetails');
-
+            
             if (!itemId) {
                 detailsDiv.style.display = 'none';
                 return;
             }
-
+            
             const item = stockDB.products.find(p => p.id === itemId);
             if (item) {
-                document.getElementById('currentStock').textContent = `${item.currentStock} ${item.unit}`;
-                document.getElementById('minStock').textContent = `${item.minStock} ${item.unit}`;
-                document.getElementById('itemPrice').textContent = formatKSH(item.price);
-                document.getElementById('unitPrice').value = item.price;
+                document.getElementById('currentStock').textContent = `${item.currentStock || 0} ${item.unit}`;
+                document.getElementById('minStock').textContent = `${item.minStock || 5} ${item.unit}`;
+                document.getElementById('itemPrice').textContent = formatKSH(item.price || 0);
+                document.getElementById('unitPrice').value = item.price || 0;
                 detailsDiv.style.display = 'block';
                 calculateTotal();
             }
@@ -1385,38 +1599,40 @@
             const unitPrice = parseFloat(document.getElementById('unitPrice').value);
             const notes = document.getElementById('notes').value;
             const type = document.getElementById('btnIn').classList.contains('active') ? 'in' : 'out';
-
+            
             if (!itemId) {
                 showNotification('❌ Please select an item', 'error');
                 return;
             }
-
+            
             if (!quantity || quantity <= 0) {
                 showNotification('❌ Please enter a valid quantity', 'error');
                 return;
             }
-
+            
             const item = stockDB.products.find(p => p.id === itemId);
             if (!item) {
                 showNotification('❌ Item not found', 'error');
                 return;
             }
-
-            if (type === 'out' && item.currentStock < quantity) {
-                showNotification(`❌ Not enough stock! Only ${item.currentStock} ${item.unit} available`, 'error');
+            
+            const currentStock = item.currentStock || 0;
+            
+            if (type === 'out' && currentStock < quantity) {
+                showNotification(`❌ Not enough stock! Only ${currentStock} ${item.unit} available`, 'error');
                 return;
             }
-
+            
             if (type === 'in') {
-                item.currentStock += quantity;
+                item.currentStock = currentStock + quantity;
             } else {
-                item.currentStock -= quantity;
+                item.currentStock = currentStock - quantity;
             }
-
-            if (unitPrice !== item.price) {
+            
+            if (unitPrice !== (item.price || 0)) {
                 item.price = unitPrice;
             }
-
+            
             const transaction = {
                 id: Date.now(),
                 date: new Date().toISOString(),
@@ -1429,32 +1645,34 @@
                 notes: notes,
                 newStock: item.currentStock
             };
-
+            
             stockDB.transactions.unshift(transaction);
-
+            
             saveData();
             updateDashboard();
             loadStockList();
             loadRecentTransactions();
-
+            
             document.getElementById('quantity').value = 1;
             document.getElementById('notes').value = '';
             calculateTotal();
-
+            
             showNotification(`✅ ${type === 'in' ? 'Added' : 'Sold'} ${quantity} ${item.unit} of ${item.name}`, 'success');
         }
 
         function quickSellItem(itemId, quantity = 1) {
             const item = stockDB.products.find(p => p.id === itemId);
             if (!item) return;
-
-            if (item.currentStock < quantity) {
+            
+            const currentStock = item.currentStock || 0;
+            
+            if (currentStock < quantity) {
                 showNotification(`❌ Not enough ${item.name} in stock`, 'error');
                 return;
             }
-
-            item.currentStock -= quantity;
-
+            
+            item.currentStock = currentStock - quantity;
+            
             const transaction = {
                 id: Date.now(),
                 date: new Date().toISOString(),
@@ -1462,26 +1680,26 @@
                 itemName: item.name,
                 type: 'out',
                 quantity: quantity,
-                price: item.price,
-                total: quantity * item.price,
+                price: item.price || 0,
+                total: quantity * (item.price || 0),
                 notes: 'Quick sale',
                 newStock: item.currentStock
             };
-
+            
             stockDB.transactions.unshift(transaction);
             saveData();
             updateDashboard();
             loadStockList();
-
+            
             showNotification(`✅ Sold ${quantity} ${item.unit} of ${item.name}`, 'success');
         }
 
         function quickAddStock(itemId, quantity = 1) {
             const item = stockDB.products.find(p => p.id === itemId);
             if (!item) return;
-
-            item.currentStock += quantity;
-
+            
+            item.currentStock = (item.currentStock || 0) + quantity;
+            
             const transaction = {
                 id: Date.now(),
                 date: new Date().toISOString(),
@@ -1489,29 +1707,29 @@
                 itemName: item.name,
                 type: 'in',
                 quantity: quantity,
-                price: item.price,
-                total: quantity * item.price,
+                price: item.price || 0,
+                total: quantity * (item.price || 0),
                 notes: 'Quick add',
                 newStock: item.currentStock
             };
-
+            
             stockDB.transactions.unshift(transaction);
             saveData();
             updateDashboard();
             loadStockList();
-
+            
             showNotification(`✅ Added ${quantity} ${item.unit} of ${item.name}`, 'success');
         }
 
         function loadRecentTransactions() {
             const recent = stockDB.transactions.slice(0, 10);
             const container = document.getElementById('recentTransactions');
-
+            
             if (recent.length === 0) {
                 container.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No recent transactions</p>';
                 return;
             }
-
+            
             container.innerHTML = recent.map(t => `
                 <div style="margin: 10px 0; padding: 12px; background: white; border-radius: 8px; border-left: 4px solid ${t.type === 'in' ? '#27ae60' : '#e74c3c'};">
                     <div style="display: flex; justify-content: space-between;">
@@ -1521,7 +1739,7 @@
                         </span>
                     </div>
                     <div style="font-size: 0.9em; color: #666;">
-                        ${formatKSH(t.total)} • ${new Date(t.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        ${formatKSH(t.total)} • ${new Date(t.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                     </div>
                     ${t.notes ? `<div style="font-size: 0.85em; color: #888; margin-top: 5px;">${t.notes}</div>` : ''}
                 </div>
@@ -1538,28 +1756,28 @@
             const stock = parseInt(document.getElementById('newItemStock').value);
             const minStock = parseInt(document.getElementById('newItemMinStock').value);
             const reorderQty = parseInt(document.getElementById('newItemReorderQty').value);
-
+            
             if (!name) {
                 showNotification('❌ Please enter item name', 'error');
                 return;
             }
-
+            
             if (price < 0 || stock < 0 || minStock < 0 || reorderQty < 1) {
                 showNotification('❌ Please enter valid numbers', 'error');
                 return;
             }
-
-            const duplicate = stockDB.products.find(item =>
-                item.name.toLowerCase() === name.toLowerCase() &&
+            
+            const duplicate = stockDB.products.find(item => 
+                item.name.toLowerCase() === name.toLowerCase() && 
                 item.category === category
             );
-
+            
             if (duplicate) {
                 if (!confirm(`"${name}" already exists in ${category}. Add anyway?`)) {
                     return;
                 }
             }
-
+            
             const newItem = {
                 id: 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
                 name: name,
@@ -1573,16 +1791,16 @@
                 supplier: 'Not specified',
                 dateAdded: new Date().toISOString()
             };
-
+            
             stockDB.products.push(newItem);
-
+            
             saveData();
             updateAllDisplays();
-
+            
             document.getElementById('newItemName').value = '';
             document.getElementById('newItemStock').value = 0;
             document.getElementById('newItemPrice').value = 100;
-
+            
             showNotification(`✅ Added ${name} to inventory`, 'success');
             showTab('stock');
         }
@@ -1593,7 +1811,7 @@
                 balloon: { name: 'New Balloon', category: 'balloon', color: '#FFD700', unit: 'pack', price: 450 },
                 card: { name: 'New Card', category: 'card', color: '#FF69B4', unit: 'each', price: 125 }
             };
-
+            
             const template = templates[type];
             if (template) {
                 document.getElementById('newItemName').value = template.name;
@@ -1601,7 +1819,7 @@
                 document.getElementById('newItemColor').value = template.color;
                 document.getElementById('newItemUnit').value = template.unit;
                 document.getElementById('newItemPrice').value = template.price;
-
+                
                 showNotification(`📝 Template filled for ${type}`, 'success');
             }
         }
@@ -1612,14 +1830,14 @@
                 const count = stockDB.products.filter(p => p.category === cat).length;
                 return { category: cat, count: count };
             }).filter(s => s.count === 0);
-
+            
             const container = document.getElementById('autoSuggestions');
-
+            
             if (suggestions.length === 0) {
                 container.innerHTML = '<p>✅ You have items in all categories!</p>';
                 return;
             }
-
+            
             container.innerHTML = `
                 <p>💡 Consider adding items in these empty categories:</p>
                 <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
@@ -1641,17 +1859,17 @@
         function searchEditItems() {
             const searchTerm = document.getElementById('editSearch').value.toLowerCase();
             const itemsList = document.getElementById('editItemList');
-
+            
             let filtered = stockDB.products;
-
+            
             if (searchTerm) {
-                filtered = filtered.filter(item =>
+                filtered = filtered.filter(item => 
                     item.name.toLowerCase().includes(searchTerm) ||
-                    item.category.toLowerCase().includes(searchTerm) ||
+                    (item.category && item.category.toLowerCase().includes(searchTerm)) ||
                     (item.supplier && item.supplier.toLowerCase().includes(searchTerm))
                 );
             }
-
+            
             if (filtered.length === 0) {
                 itemsList.innerHTML = `
                     <div style="padding: 30px; text-align: center; color: #666;">
@@ -1660,7 +1878,7 @@
                 `;
                 return;
             }
-
+            
             itemsList.innerHTML = filtered.map(item => `
                 <div class="edit-item-entry" onclick="loadItemForEdit('${item.id}')" 
                      style="padding: 12px 15px; border-bottom: 1px solid #eee; cursor: pointer; transition: all 0.2s;"
@@ -1671,8 +1889,8 @@
                             <strong>${item.name}</strong>
                             <div style="font-size: 0.9em; color: #666;">
                                 ${getCategoryEmoji(item.category)} ${item.category} • 
-                                Stock: ${item.currentStock} ${item.unit} • 
-                                ${formatKSH(item.price)}
+                                Stock: ${item.currentStock || 0} ${item.unit} • 
+                                ${formatKSH(item.price || 0)}
                             </div>
                         </div>
                         <div style="color: #1a73e8; font-size: 0.9em;">
@@ -1689,56 +1907,56 @@
                 showNotification('❌ Item not found', 'error');
                 return;
             }
-
+            
             currentlyEditingItem = item;
-
+            
             document.getElementById('editItemName').value = item.name;
             document.getElementById('editItemCategory').value = item.category;
             document.getElementById('editItemColor').value = item.color || '#6c757d';
             document.getElementById('editItemUnit').value = item.unit;
-            document.getElementById('editItemPrice').value = item.price;
-            document.getElementById('editItemStock').value = item.currentStock;
-            document.getElementById('editItemMinStock').value = item.minStock;
-            document.getElementById('editItemReorderQty').value = item.reorderQty;
+            document.getElementById('editItemPrice').value = item.price || 0;
+            document.getElementById('editItemStock').value = item.currentStock || 0;
+            document.getElementById('editItemMinStock').value = item.minStock || 5;
+            document.getElementById('editItemReorderQty').value = item.reorderQty || 10;
             document.getElementById('editItemSupplier').value = item.supplier || 'Not specified';
             document.getElementById('editItemNotes').value = item.notes || '';
-
+            
             document.getElementById('editingItemName').textContent = item.name;
             document.getElementById('editFormContainer').style.display = 'block';
-
+            
             document.getElementById('editFormContainer').scrollIntoView({ behavior: 'smooth' });
-
+            
             updateItemStatistics(itemId);
         }
 
         function updateItemStatistics(itemId) {
             const item = stockDB.products.find(p => p.id === itemId);
             if (!item) return;
-
-            const itemValue = item.currentStock * item.price;
+            
+            const itemValue = (item.currentStock || 0) * (item.price || 0);
             document.getElementById('statValue').textContent = formatKSH(itemValue);
-
+            
             let statusText = 'Good';
             let statusColor = '#27ae60';
             let statusBg = '#d4edda';
-
-            if (item.currentStock === 0) {
+            
+            if ((item.currentStock || 0) === 0) {
                 statusText = 'Out of Stock';
                 statusColor = '#e74c3c';
                 statusBg = '#f8d7da';
-            } else if (item.currentStock <= item.minStock) {
+            } else if ((item.currentStock || 0) <= (item.minStock || 5)) {
                 statusText = 'Low Stock';
                 statusColor = '#f39c12';
                 statusBg = '#fff3cd';
             }
-
+            
             const statusElement = document.getElementById('statStatus');
             statusElement.textContent = statusText;
             statusElement.style.color = statusColor;
             statusElement.style.background = statusBg;
-
+            
             loadItemTransactions(itemId);
-
+            
             document.getElementById('itemStats').style.display = 'block';
         }
 
@@ -1746,9 +1964,9 @@
             const transactions = stockDB.transactions
                 .filter(t => t.itemId === itemId)
                 .slice(0, 10);
-
+            
             const container = document.getElementById('itemTransactions');
-
+            
             if (transactions.length === 0) {
                 container.innerHTML = `
                     <div style="text-align: center; padding: 20px; color: #666;">
@@ -1757,7 +1975,7 @@
                 `;
                 return;
             }
-
+            
             container.innerHTML = transactions.map(t => `
                 <div style="margin: 8px 0; padding: 10px; background: #f8f9fa; border-radius: 6px; font-size: 0.9em;">
                     <div style="display: flex; justify-content: space-between;">
@@ -1782,9 +2000,9 @@
                 showNotification('❌ No item selected for editing', 'error');
                 return;
             }
-
+            
             const item = currentlyEditingItem;
-
+            
             item.name = document.getElementById('editItemName').value.trim();
             item.category = document.getElementById('editItemCategory').value;
             item.color = document.getElementById('editItemColor').value;
@@ -1796,44 +2014,44 @@
             item.supplier = document.getElementById('editItemSupplier').value.trim();
             item.notes = document.getElementById('editItemNotes').value.trim();
             item.lastUpdated = new Date().toISOString();
-
+            
             if (!item.name) {
                 showNotification('❌ Item name cannot be empty', 'error');
                 return;
             }
-
+            
             if (item.price < 0 || item.currentStock < 0 || item.minStock < 0 || item.reorderQty < 1) {
                 showNotification('❌ Please enter valid numbers', 'error');
                 return;
             }
-
-            const duplicate = stockDB.products.find(p =>
-                p.id !== item.id &&
-                p.name.toLowerCase() === item.name.toLowerCase() &&
+            
+            const duplicate = stockDB.products.find(p => 
+                p.id !== item.id && 
+                p.name.toLowerCase() === item.name.toLowerCase() && 
                 p.category === item.category
             );
-
+            
             if (duplicate) {
                 if (!confirm(`"${item.name}" already exists in ${item.category}. Save anyway?`)) {
                     return;
                 }
             }
-
+            
             saveData();
             updateAllDisplays();
-
+            
             document.getElementById('editingItemName').textContent = item.name;
             updateItemStatistics(item.id);
-
+            
             showNotification(`✅ ${item.name} updated successfully`, 'success');
         }
 
         function deleteItem() {
             if (!currentlyEditingItem) return;
-
+            
             const itemName = currentlyEditingItem.name;
             const hasTransactions = stockDB.transactions.some(t => t.itemId === currentlyEditingItem.id);
-
+            
             if (hasTransactions) {
                 if (!confirm(`⚠️ "${itemName}" has transaction history.\n\nDelete anyway? This cannot be undone.`)) {
                     return;
@@ -1843,18 +2061,18 @@
                     return;
                 }
             }
-
+            
             stockDB.products = stockDB.products.filter(p => p.id !== currentlyEditingItem.id);
-
+            
             saveData();
             updateAllDisplays();
-
+            
             currentlyEditingItem = null;
             document.getElementById('editFormContainer').style.display = 'none';
             document.getElementById('itemStats').style.display = 'none';
             document.getElementById('editSearch').value = '';
             searchEditItems();
-
+            
             showNotification(`🗑️ ${itemName} deleted`, 'warning');
         }
 
@@ -1863,17 +2081,17 @@
                 showNotification('❌ Please select an item first', 'error');
                 return;
             }
-
+            
             const item = currentlyEditingItem;
-            const newStock = item.currentStock + amount;
-
+            const newStock = (item.currentStock || 0) + amount;
+            
             if (newStock < 0) {
                 showNotification('❌ Stock cannot be negative', 'error');
                 return;
             }
-
+            
             item.currentStock = newStock;
-
+            
             const transaction = {
                 id: Date.now(),
                 date: new Date().toISOString(),
@@ -1881,14 +2099,14 @@
                 itemName: item.name,
                 type: amount > 0 ? 'in' : 'out',
                 quantity: Math.abs(amount),
-                price: item.price,
-                total: Math.abs(amount) * item.price,
+                price: item.price || 0,
+                total: Math.abs(amount) * (item.price || 0),
                 notes: amount > 0 ? 'Quick stock addition' : 'Quick stock removal',
                 newStock: newStock
             };
-
+            
             stockDB.transactions.unshift(transaction);
-
+            
             document.getElementById('editItemStock').value = newStock;
             saveItemEdits();
         }
@@ -1898,46 +2116,46 @@
                 showNotification('❌ Please select an item first', 'error');
                 return;
             }
-
+            
             const original = currentlyEditingItem;
             const copyName = `${original.name} (Copy)`;
-
+            
             const newItem = {
                 id: 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
                 name: copyName,
                 category: original.category,
                 color: original.color,
                 currentStock: 0,
-                minStock: original.minStock,
-                reorderQty: original.reorderQty,
+                minStock: original.minStock || 5,
+                reorderQty: original.reorderQty || 10,
                 unit: original.unit,
-                price: original.price,
+                price: original.price || 0,
                 supplier: original.supplier,
                 notes: `Duplicate of ${original.name}`,
                 dateAdded: new Date().toISOString()
             };
-
+            
             stockDB.products.push(newItem);
             saveData();
             updateAllDisplays();
-
+            
             loadItemForEdit(newItem.id);
-
+            
             showNotification(`📋 ${copyName} created`, 'success');
         }
 
         function resetStock() {
             if (!currentlyEditingItem) return;
-
+            
             const newStock = parseInt(prompt(`Reset stock for "${currentlyEditingItem.name}" to:`, 0));
-
+            
             if (isNaN(newStock) || newStock < 0) {
                 showNotification('❌ Invalid stock value', 'error');
                 return;
             }
-
-            const difference = newStock - currentlyEditingItem.currentStock;
-
+            
+            const difference = newStock - (currentlyEditingItem.currentStock || 0);
+            
             if (difference !== 0) {
                 const transaction = {
                     id: Date.now(),
@@ -1946,15 +2164,15 @@
                     itemName: currentlyEditingItem.name,
                     type: difference > 0 ? 'in' : 'out',
                     quantity: Math.abs(difference),
-                    price: currentlyEditingItem.price,
-                    total: Math.abs(difference) * currentlyEditingItem.price,
+                    price: currentlyEditingItem.price || 0,
+                    total: Math.abs(difference) * (currentlyEditingItem.price || 0),
                     notes: 'Stock reset',
                     newStock: newStock
                 };
-
+                
                 stockDB.transactions.unshift(transaction);
             }
-
+            
             currentlyEditingItem.currentStock = newStock;
             document.getElementById('editItemStock').value = newStock;
             saveItemEdits();
@@ -1962,9 +2180,9 @@
 
         // ==================== REORDER LIST ====================
         function updateReorderList() {
-            const reorderItems = stockDB.products.filter(item => item.currentStock <= item.minStock);
+            const reorderItems = stockDB.products.filter(item => (item.currentStock || 0) <= (item.minStock || 5));
             const container = document.getElementById('reorderList');
-
+            
             if (reorderItems.length === 0) {
                 container.innerHTML = `
                     <div style="text-align: center; padding: 40px; background: #f8f9fa; border-radius: 12px;">
@@ -1975,10 +2193,10 @@
                 updateSupplierContacts([]);
                 return;
             }
-
-            const totalItems = reorderItems.reduce((sum, item) => sum + item.reorderQty, 0);
-            const totalCost = reorderItems.reduce((sum, item) => sum + (item.reorderQty * item.price), 0);
-
+            
+            const totalItems = reorderItems.reduce((sum, item) => sum + (item.reorderQty || 10), 0);
+            const totalCost = reorderItems.reduce((sum, item) => sum + ((item.reorderQty || 10) * (item.price || 0)), 0);
+            
             container.innerHTML = `
                 <div style="background: #fff3cd; padding: 25px; border-radius: 12px; margin-bottom: 30px;">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -1994,21 +2212,21 @@
                                 <strong>${item.name}</strong>
                                 <div style="font-size: 0.9em; color: #666;">${item.category}</div>
                             </div>
-                            <div>Current: ${item.currentStock}</div>
-                            <div>Min: ${item.minStock}</div>
-                            <div><strong>Order: ${item.reorderQty}</strong></div>
-                            <div>${formatKSH(item.reorderQty * item.price)}</div>
+                            <div>Current: ${item.currentStock || 0}</div>
+                            <div>Min: ${item.minStock || 5}</div>
+                            <div><strong>Order: ${item.reorderQty || 10}</strong></div>
+                            <div>${formatKSH((item.reorderQty || 10) * (item.price || 0))}</div>
                         </div>
                     `).join('')}
                 </div>
             `;
-
+            
             updateSupplierContacts(reorderItems);
         }
 
         function updateSupplierContacts(reorderItems) {
             const container = document.getElementById('supplierContacts');
-
+            
             const categories = {};
             reorderItems.forEach(item => {
                 if (!categories[item.category]) {
@@ -2016,12 +2234,12 @@
                 }
                 categories[item.category].push(item);
             });
-
+            
             container.innerHTML = Object.entries(categories).map(([category, items]) => `
                 <div style="background: white; padding: 15px; border-radius: 8px; margin: 10px 0;">
                     <h4 style="margin-bottom: 10px;">${getCategoryEmoji(category)} ${category.toUpperCase()}</h4>
                     <p><strong>Items to order:</strong> ${items.length}</p>
-                    <p><strong>Total quantity:</strong> ${items.reduce((sum, item) => sum + item.reorderQty, 0)}</p>
+                    <p><strong>Total quantity:</strong> ${items.reduce((sum, item) => sum + (item.reorderQty || 10), 0)}</p>
                     <p><strong>Suggested supplier:</strong> ${getSupplierForCategory(category)}</p>
                 </div>
             `).join('');
@@ -2055,14 +2273,14 @@
                             <th>Price</th>
                             <th>Total</th>
                         </tr>
-                        ${stockDB.products.filter(item => item.currentStock <= item.minStock).map(item => `
+                        ${stockDB.products.filter(item => (item.currentStock || 0) <= (item.minStock || 5)).map(item => `
                             <tr>
                                 <td>${item.name}</td>
-                                <td>${item.currentStock} ${item.unit}</td>
-                                <td>${item.minStock}</td>
-                                <td>${item.reorderQty}</td>
-                                <td>${formatKSH(item.price)}</td>
-                                <td>${formatKSH(item.reorderQty * item.price)}</td>
+                                <td>${item.currentStock || 0} ${item.unit}</td>
+                                <td>${item.minStock || 5}</td>
+                                <td>${item.reorderQty || 10}</td>
+                                <td>${formatKSH(item.price || 0)}</td>
+                                <td>${formatKSH((item.reorderQty || 10) * (item.price || 0))}</td>
                             </tr>
                         `).join('')}
                     </table>
@@ -2076,8 +2294,8 @@
         // ==================== IMPORT/EXPORT FUNCTIONS ====================
         function setupImport() {
             const importFile = document.getElementById('importFile');
-
-            importFile.addEventListener('change', function (event) {
+            
+            importFile.addEventListener('change', function(event) {
                 const file = event.target.files[0];
                 if (file) {
                     selectedImportFile = file;
@@ -2108,19 +2326,19 @@
 
         function showImportPreview(file) {
             const reader = new FileReader();
-
-            reader.onload = function (event) {
+            
+            reader.onload = function(event) {
                 try {
                     const importedData = JSON.parse(event.target.result);
                     const previewContent = document.getElementById('previewContent');
                     const importPreview = document.getElementById('importPreview');
-
+                    
                     if (!importedData.products || !Array.isArray(importedData.products)) {
                         previewContent.innerHTML = '<p style="color: #e74c3c;">❌ Invalid file format</p>';
                         importPreview.style.display = 'block';
                         return;
                     }
-
+                    
                     previewContent.innerHTML = `
                         <p><strong>Shop:</strong> ${importedData.settings?.shopName || 'Unknown'}</p>
                         <p><strong>Items:</strong> ${importedData.products.length} products</p>
@@ -2134,26 +2352,26 @@
                                     ${item.name} - ${item.currentStock} ${item.unit}
                                 </div>
                             `).join('')}
-                            ${importedData.products.length > 5 ?
-                            `<div style="padding: 5px 0; color: #666;">... and ${importedData.products.length - 5} more items</div>` : ''}
+                            ${importedData.products.length > 5 ? 
+                                `<div style="padding: 5px 0; color: #666;">... and ${importedData.products.length - 5} more items</div>` : ''}
                         </div>
                     `;
-
+                    
                     importPreview.style.display = 'block';
-
+                    
                 } catch (error) {
-                    document.getElementById('previewContent').innerHTML =
+                    document.getElementById('previewContent').innerHTML = 
                         `<p style="color: #e74c3c;">❌ Error reading file: ${error.message}</p>`;
                     document.getElementById('importPreview').style.display = 'block';
                 }
             };
-
-            reader.onerror = function () {
-                document.getElementById('previewContent').innerHTML =
+            
+            reader.onerror = function() {
+                document.getElementById('previewContent').innerHTML = 
                     '<p style="color: #e74c3c;">❌ Error reading file</p>';
                 document.getElementById('importPreview').style.display = 'block';
             };
-
+            
             reader.readAsText(file);
         }
 
@@ -2162,25 +2380,25 @@
                 showNotification('❌ Please select a file first', 'error');
                 return;
             }
-
+            
             const reader = new FileReader();
-
-            reader.onload = function (event) {
+            
+            reader.onload = function(event) {
                 try {
                     const importedData = JSON.parse(event.target.result);
-
+                    
                     if (!importedData.products || !Array.isArray(importedData.products)) {
                         throw new Error('Invalid data format: Missing products array');
                     }
-
+                    
                     if (!importedData.version) {
                         throw new Error('Invalid data format: Missing version');
                     }
-
+                    
                     const itemCount = importedData.products.length;
                     const transCount = importedData.transactions?.length || 0;
                     const currentCount = stockDB.products.length;
-
+                    
                     const importMessage = `
 IMPORT CONFIRMATION
 -------------------
@@ -2195,40 +2413,40 @@ Current items: ${currentCount}
 ⚠️ This will REPLACE all current data!
 Do you want to proceed?
                     `;
-
+                    
                     if (confirm(importMessage)) {
                         stockDB = importedData;
-
-                        stockDB.version = '2.0';
+                        
+                        stockDB.version = '2.1';
                         stockDB.currency = stockDB.currency || 'KSH';
                         stockDB.settings = stockDB.settings || {
                             shopName: 'KWELL EVENTS',
                             autoBackup: true,
                             lastBackup: null
                         };
-
+                        
                         saveData();
                         updateAllDisplays();
                         resetImportUI();
-
+                        
                         showNotification(`✅ Data imported successfully! ${itemCount} items loaded`, 'success');
-
+                        
                         if (stockDB.settings.lastBackup) {
-                            document.getElementById('lastBackupDate').textContent =
+                            document.getElementById('lastBackupDate').textContent = 
                                 new Date(stockDB.settings.lastBackup).toLocaleDateString();
                         }
                     }
-
+                    
                 } catch (error) {
                     console.error('Import error:', error);
                     showNotification(`❌ Import failed: ${error.message}`, 'error');
                 }
             };
-
-            reader.onerror = function () {
+            
+            reader.onerror = function() {
                 showNotification('❌ Error reading file', 'error');
             };
-
+            
             reader.readAsText(selectedImportFile);
         }
 
@@ -2244,9 +2462,9 @@ Do you want to proceed?
             try {
                 stockDB.settings.lastSave = new Date().toISOString();
                 stockDB.settings.lastBackup = new Date().toISOString();
-
+                
                 const exportData = {
-                    version: '2.0',
+                    version: '2.1',
                     currency: 'KSH',
                     products: stockDB.products,
                     transactions: stockDB.transactions,
@@ -2254,32 +2472,32 @@ Do you want to proceed?
                     exportDate: new Date().toISOString(),
                     exportStats: {
                         totalItems: stockDB.products.length,
-                        totalStock: stockDB.products.reduce((sum, item) => sum + item.currentStock, 0),
-                        totalValue: stockDB.products.reduce((sum, item) => sum + (item.currentStock * item.price), 0)
+                        totalStock: stockDB.products.reduce((sum, item) => sum + (item.currentStock || 0), 0),
+                        totalValue: stockDB.products.reduce((sum, item) => sum + ((item.currentStock || 0) * (item.price || 0)), 0)
                     }
                 };
-
+                
                 const dataStr = JSON.stringify(exportData, null, 2);
                 const date = new Date();
-                const filename = `KWELL-Backup-${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}_${date.getHours().toString().padStart(2, '0')}-${date.getMinutes().toString().padStart(2, '0')}.json`;
-
+                const filename = `KWELL-Backup-${date.getFullYear()}-${(date.getMonth()+1).toString().padStart(2,'0')}-${date.getDate().toString().padStart(2,'0')}_${date.getHours().toString().padStart(2,'0')}-${date.getMinutes().toString().padStart(2,'0')}.json`;
+                
                 const blob = new Blob([dataStr], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
-
+                
                 link.href = url;
                 link.download = filename;
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
-
+                
                 setTimeout(() => URL.revokeObjectURL(url), 100);
-
+                
                 saveData();
                 document.getElementById('lastBackupDate').textContent = new Date().toLocaleDateString();
-
+                
                 showNotification(`✅ Backup exported: ${filename}`, 'success');
-
+                
             } catch (error) {
                 console.error('Export error:', error);
                 showNotification(`❌ Export failed: ${error.message}`, 'error');
@@ -2291,9 +2509,9 @@ Do you want to proceed?
                 const confirmation = prompt('Type "DELETE ALL" to confirm:');
                 if (confirmation === 'DELETE ALL') {
                     localStorage.removeItem('kwellStockData');
-
+                    
                     stockDB = {
-                        version: '2.0',
+                        version: '2.1',
                         currency: 'KSH',
                         products: [],
                         transactions: [],
@@ -2304,11 +2522,11 @@ Do you want to proceed?
                             lastSave: new Date().toISOString()
                         }
                     };
-
+                    
                     saveData();
                     updateAllDisplays();
                     resetImportUI();
-
+                    
                     showNotification('🗑️ All data cleared successfully', 'warning');
                 } else {
                     showNotification('❌ Deletion cancelled', 'warning');
@@ -2350,7 +2568,7 @@ Do you want to proceed?
             const notification = document.createElement('div');
             notification.className = `notification ${type}`;
             notification.textContent = message;
-
+            
             if (type === 'success') {
                 notification.style.background = 'linear-gradient(135deg, #27ae60 0%, #2ecc71 100%)';
             } else if (type === 'error') {
@@ -2360,9 +2578,9 @@ Do you want to proceed?
             } else {
                 notification.style.background = 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)';
             }
-
+            
             document.body.appendChild(notification);
-
+            
             setTimeout(() => {
                 notification.style.animation = 'slideOut 0.3s ease';
                 setTimeout(() => {
@@ -2374,41 +2592,107 @@ Do you want to proceed?
         }
 
         function updateAllDisplays() {
+            console.log('Updating all displays...');
+            
+            // Update dashboard first
             updateDashboard();
+            
+            // Update other displays
             loadStockList();
             populateItemSelect();
             loadRecentTransactions();
             updateReorderList();
             updateFooter();
+            
+            // Update edit tab if it's active
+            if (document.getElementById('edit') && document.getElementById('edit').classList.contains('active')) {
+                loadEditTab();
+            }
+            
+            console.log('All displays updated');
         }
 
         function updateFooter() {
-            const totalItems = stockDB.products.reduce((sum, item) => sum + item.currentStock, 0);
-            const totalValue = stockDB.products.reduce((sum, item) => sum + (item.currentStock * item.price), 0);
-
-            document.getElementById('footerItemCount').textContent = totalItems.toLocaleString();
-            document.getElementById('footerStockValue').textContent = formatKSH(totalValue);
+            try {
+                const totalItems = stockDB.products.reduce((sum, item) => sum + (item.currentStock || 0), 0);
+                const totalValue = stockDB.products.reduce((sum, item) => sum + ((item.currentStock || 0) * (item.price || 0)), 0);
+                
+                document.getElementById('footerItemCount').textContent = totalItems.toLocaleString();
+                document.getElementById('footerStockValue').textContent = formatKSH(totalValue);
+            } catch (e) {
+                console.error('Error updating footer:', e);
+            }
         }
 
         // ==================== SAMPLE DATA ====================
         function initializeSampleData() {
+            console.log('Initializing sample data...');
+            
             if (stockDB.products.length === 0) {
                 stockDB.products = [
-                    { id: 'rb-001', name: 'Sky Blue Ribbon', category: 'ribbon', color: '#87CEEB', currentStock: 12, minStock: 5, reorderQty: 10, unit: 'roll', price: 250, supplier: 'Ribbon World' },
-                    { id: 'rb-002', name: 'Royal Blue Ribbon', category: 'ribbon', color: '#4169E1', currentStock: 8, minStock: 3, reorderQty: 8, unit: 'roll', price: 300, supplier: 'Ribbon World' },
-                    { id: 'bl-001', name: 'Gold Balloons 12"', category: 'balloon', color: '#FFD700', currentStock: 20, minStock: 8, reorderQty: 15, unit: 'pack', price: 450, supplier: 'Balloon Express' },
-                    { id: 'cd-001', name: 'Birthday Cards', category: 'card', color: '#FF69B4', currentStock: 50, minStock: 20, reorderQty: 30, unit: 'each', price: 125, supplier: 'Card Central' },
-                    { id: 'oa-001', name: 'Floral Oasis', category: 'oasis', color: '#8B4513', currentStock: 25, minStock: 10, reorderQty: 20, unit: 'piece', price: 150, supplier: 'Flora Supplies' }
+                    { 
+                        id: 'rb-001', 
+                        name: 'Sky Blue Ribbon', 
+                        category: 'ribbon', 
+                        color: '#87CEEB', 
+                        currentStock: 12, 
+                        minStock: 5, 
+                        reorderQty: 10, 
+                        unit: 'roll', 
+                        price: 250, 
+                        supplier: 'Ribbon World',
+                        dateAdded: new Date().toISOString()
+                    },
+                    { 
+                        id: 'rb-002', 
+                        name: 'Royal Blue Ribbon', 
+                        category: 'ribbon', 
+                        color: '#4169E1', 
+                        currentStock: 8, 
+                        minStock: 3, 
+                        reorderQty: 8, 
+                        unit: 'roll', 
+                        price: 300, 
+                        supplier: 'Ribbon World',
+                        dateAdded: new Date().toISOString()
+                    },
+                    { 
+                        id: 'bl-001', 
+                        name: 'Gold Balloons 12"', 
+                        category: 'balloon', 
+                        color: '#FFD700', 
+                        currentStock: 20, 
+                        minStock: 8, 
+                        reorderQty: 15, 
+                        unit: 'pack', 
+                        price: 450, 
+                        supplier: 'Balloon Express',
+                        dateAdded: new Date().toISOString()
+                    }
                 ];
+                
+                stockDB.settings = {
+                    shopName: 'KWELL EVENTS',
+                    autoBackup: true,
+                    lastBackup: null,
+                    lastLoad: new Date().toISOString(),
+                    lastSave: new Date().toISOString()
+                };
+                
                 saveData();
-                showNotification('📦 Sample data loaded. Add your own items!', 'success');
+                
+                const totalStock = stockDB.products.reduce((sum, item) => sum + item.currentStock, 0);
+                console.log(`Sample data initialized: ${stockDB.products.length} items, ${totalStock} total stock`);
+                
+                showNotification('📦 Sample data loaded', 'success');
             }
         }
 
         function migrateOldData(oldData) {
             showNotification('🔄 Migrating old data format...', 'warning');
-
-            if (oldData.items) {
+            
+            if (oldData.items && Array.isArray(oldData.items)) {
+                // Convert from v1.0 format
                 stockDB.products = oldData.items.map(item => ({
                     id: item.id || 'item-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
                     name: item.name || 'Unnamed Item',
@@ -2420,32 +2704,32 @@ Do you want to proceed?
                     unit: item.unit || 'piece',
                     price: item.price || 0,
                     supplier: item.supplier || 'Not specified',
-                    dateAdded: new Date().toISOString()
+                    dateAdded: item.dateAdded || new Date().toISOString()
                 }));
-
+                
                 if (oldData.transactions) {
                     stockDB.transactions = oldData.transactions;
                 }
-
+                
                 stockDB.settings.shopName = oldData.shopName || 'KWELL EVENTS';
-
+                
                 saveData();
-                showNotification('✅ Data migration complete!', 'success');
+                showNotification('✅ Old data migrated successfully', 'success');
             }
         }
 
         // ==================== QUICK ACTIONS ====================
         function quickSell(itemType) {
-            const items = stockDB.products.filter(item =>
-                item.category.toLowerCase().includes(itemType.toLowerCase()) &&
-                item.currentStock > 0
+            const items = stockDB.products.filter(item => 
+                item.category.toLowerCase().includes(itemType.toLowerCase()) && 
+                (item.currentStock || 0) > 0
             );
-
+            
             if (items.length === 0) {
                 showNotification(`❌ No ${itemType} items in stock`, 'error');
                 return;
             }
-
+            
             if (items.length === 1) {
                 quickSellItem(items[0].id, 1);
             } else {
@@ -2472,12 +2756,12 @@ Do you want to proceed?
         }
 
         function emailReorderList() {
-            const reorderItems = stockDB.products.filter(item => item.currentStock <= item.minStock);
+            const reorderItems = stockDB.products.filter(item => (item.currentStock || 0) <= (item.minStock || 5));
             if (reorderItems.length === 0) {
                 showNotification('✅ No items need reordering', 'success');
                 return;
             }
-
+            
             const subject = 'KWELL EVENTS - Reorder List';
             const body = `
 Reorder List - ${new Date().toLocaleDateString()}
@@ -2485,19 +2769,20 @@ Reorder List - ${new Date().toLocaleDateString()}
 Items to reorder:
 ${reorderItems.map(item => `
 • ${item.name}
-  Current: ${item.currentStock} ${item.unit}
-  Min: ${item.minStock}
-  Order: ${item.reorderQty} ${item.unit}
+  Current: ${item.currentStock || 0} ${item.unit}
+  Min: ${item.minStock || 5}
+  Order: ${item.reorderQty || 10} ${item.unit}
   Supplier: ${item.supplier || 'Not specified'}
 `).join('')}
 
-Total items: ${reorderItems.reduce((sum, item) => sum + item.reorderQty, 0)}
-Total cost: KSH ${reorderItems.reduce((sum, item) => sum + (item.reorderQty * item.price), 0).toLocaleString()}
+Total items: ${reorderItems.reduce((sum, item) => sum + (item.reorderQty || 10), 0)}
+Total cost: KSH ${reorderItems.reduce((sum, item) => sum + ((item.reorderQty || 10) * (item.price || 0)), 0).toLocaleString()}
             `;
-
+            
             window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
         }
     </script>
 </body>
 
 </html>
+
